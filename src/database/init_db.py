@@ -19,7 +19,6 @@ def create_tables(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS stores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE,
-            is_business INTEGER NOT NULL DEFAULT 0,
             last_visited TEXT
         );
 
