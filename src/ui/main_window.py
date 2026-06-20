@@ -1,7 +1,9 @@
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -9,11 +11,15 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QMainWindow,
-    QWidget,
-    QVBoxLayout,
+    QScrollArea,
+    QSizePolicy,
     QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
+from services import visit_service
+from services import distance_service
 from services import store_service
 
 
@@ -64,6 +70,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 600)
 
         self.editing_store_id = None
+        self.pending_route = []
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
@@ -78,6 +85,8 @@ class MainWindow(QMainWindow):
         self.build_today_tab()
 
         self.refresh_store_list()
+        self.refresh_today_cards()
+        self.refresh_today_route_display()
 
     def build_stores_tab(self):
         main_layout = QVBoxLayout(self.stores_tab)
@@ -95,7 +104,7 @@ class MainWindow(QMainWindow):
         self.search_input.setPlaceholderText("Search stores")
         self.search_input.setMinimumHeight(40)
         self.search_input.setStyleSheet("font-size: 16px;")
-        self.search_input.textChanged.connect(self.refresh_store_list)
+        self.search_input.textChanged.connect(lambda _text: self.refresh_store_list())
         search_row.addWidget(self.search_input)
 
         main_layout.addLayout(search_row)
@@ -129,12 +138,86 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("font-size: 24px; font-weight: bold;")
         layout.addWidget(title)
 
-        subtitle = QLabel("This is where the route for today will go.")
+        subtitle = QLabel("Click stores below to build today's route.")
         layout.addWidget(subtitle)
 
-        placeholder = QLabel("Coming next: click stores in order, enter miles, and save the day.")
-        placeholder.setStyleSheet("font-size: 16px; color: #666;")
-        layout.addWidget(placeholder)
+        route_header_row = QHBoxLayout()
+
+        route_title = QLabel("Today's Route")
+        route_title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        route_header_row.addWidget(route_title)
+
+        route_header_row.addStretch()
+
+        self.route_total_label = QLabel("Total miles: 0.00")
+        self.route_total_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        route_header_row.addWidget(self.route_total_label)
+
+        
+        save_route_button = QPushButton("Save Route")
+        save_route_button.setMinimumSize(140, 40)
+        save_route_button.clicked.connect(self.save_today_route)
+        route_header_row.addWidget(save_route_button)
+
+        self.delete_last_stop_button = QPushButton("Delete Last Stop")
+        self.delete_last_stop_button.setMinimumSize(160, 40)
+        self.delete_last_stop_button.clicked.connect(self.delete_last_stop)
+        route_header_row.addWidget(self.delete_last_stop_button)
+
+        clear_route_button = QPushButton("Clear Route")
+        clear_route_button.setMinimumSize(140, 40)
+        clear_route_button.clicked.connect(self.clear_today_route)
+        route_header_row.addWidget(clear_route_button)
+        layout.addLayout(route_header_row)
+
+        self.route_scroll = QScrollArea()
+        self.route_scroll.setWidgetResizable(True)
+        self.route_scroll.setFixedHeight(90)
+        self.route_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.route_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        self.route_container = QWidget()
+        self.route_layout = QHBoxLayout(self.route_container)
+        self.route_layout.setSpacing(10)
+        self.route_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.route_scroll.setWidget(self.route_container)
+        layout.addWidget(self.route_scroll)
+
+        cards_title = QLabel("Stores")
+        cards_title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        layout.addWidget(cards_title)
+
+        self.today_cards_scroll = QScrollArea()
+        self.today_cards_scroll.setWidgetResizable(True)
+
+        self.today_cards_container = QWidget()
+        self.today_cards_grid = QGridLayout(self.today_cards_container)
+        self.today_cards_grid.setHorizontalSpacing(12)
+        self.today_cards_grid.setVerticalSpacing(12)
+        self.today_cards_grid.setContentsMargins(0, 0, 0, 0)
+        self.today_cards_grid.setColumnStretch(0, 1)
+        self.today_cards_grid.setColumnStretch(1, 1)
+
+        self.today_cards_scroll.setWidget(self.today_cards_container)
+        layout.addWidget(self.today_cards_scroll)
+
+    def save_today_route(self):
+        if not self.pending_route:
+            QMessageBox.information(self, "Save Route", "There is no route to save.")
+            return
+
+        for index, step in enumerate(self.pending_route, start=1):
+            visit_service.add_visit(
+                store_id=step["store_id"],
+                sequence_number=index,
+                miles_from_previous=step["miles_from_previous"],
+            )
+
+        QMessageBox.information(self, "Save Route", "Route saved successfully.")
+        self.clear_today_route()
+        self.refresh_store_list()
+        self.refresh_today_cards()
 
     def refresh_store_list(self, editing_store_id=None):
         self.editing_store_id = editing_store_id
@@ -175,6 +258,144 @@ class MainWindow(QMainWindow):
                 0,
                 lambda value=current_scroll: self.store_list.verticalScrollBar().setValue(value),
             )
+
+    def refresh_today_cards(self):
+        while self.today_cards_grid.count():
+            item = self.today_cards_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        stores = store_service.get_all_stores()
+
+        for index, store in enumerate(stores):
+            row = index // 2
+            col = index % 2
+
+            card = QPushButton(store["name"])
+            card.setMinimumHeight(90)
+            card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            card.setStyleSheet(
+                """
+                QPushButton {
+                    font-size: 18px;
+                    font-weight: bold;
+                    text-align: left;
+                    padding: 12px 16px;
+                    border: 1px solid #ccc;
+                    border-radius: 12px;
+                    background-color: #f7f7f7;
+                }
+                QPushButton:hover {
+                    background-color: #ececec;
+                }
+                QPushButton:pressed {
+                    background-color: #dddddd;
+                }
+                """
+            )
+            card.clicked.connect(
+                lambda checked=False, store_id=store["id"]: self.add_to_today_route(store_id)
+            )
+
+            self.today_cards_grid.addWidget(card, row, col)
+
+    def refresh_today_route_display(self):
+        while self.route_layout.count():
+            item = self.route_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        self.delete_last_stop_button.setEnabled(bool(self.pending_route))
+
+        total_miles = 0.0
+
+        if not self.pending_route:
+            self.route_total_label.setText("Total miles: 0.00")
+            empty_label = QLabel("No stops yet")
+            empty_label.setStyleSheet(
+                """
+                QLabel {
+                    font-size: 16px;
+                    color: #666;
+                    padding: 10px 16px;
+                    border: 1px dashed #bbb;
+                    border-radius: 10px;
+                    background-color: #fafafa;
+                }
+                """
+            )
+            if hasattr(self, "delete_last_stop_button"):
+                self.delete_last_stop_button.setEnabled(bool(self.pending_route))
+            self.route_layout.addWidget(empty_label)
+            self.route_layout.addStretch()
+            return
+
+        for index, step in enumerate(self.pending_route):
+            store = store_service.get_store_by_id(step["store_id"])
+            if store is None:
+                continue
+
+            if step["miles_from_previous"] is not None:
+                total_miles += step["miles_from_previous"]
+
+            chip = QLabel(f"{index + 1}. {store['name']}")
+            chip.setMinimumHeight(44)
+            chip.setStyleSheet(
+                """
+                QLabel {
+                    font-size: 16px;
+                    font-weight: bold;
+                    padding: 10px 14px;
+                    border: 1px solid #ccc;
+                    border-radius: 10px;
+                    background-color: #f7f7f7;
+                }
+                """
+            )
+            chip.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            chip.adjustSize()
+            self.route_layout.addWidget(chip)
+
+        self.route_total_label.setText(f"Total miles: {total_miles:.2f}")
+        self.route_layout.addStretch()
+
+    def add_to_today_route(self, store_id: int):
+        if not self.pending_route:
+            self.pending_route.append(
+                {"store_id": store_id, "miles_from_previous": None}
+            )
+            self.refresh_today_route_display()
+            return
+
+        previous_store_id = self.pending_route[-1]["store_id"]
+        distance = distance_service.get_distance(previous_store_id, store_id)
+
+        if distance is None:
+            miles, ok = QInputDialog.getDouble(
+                self,
+                "Missing distance",
+                "No recorded distance exists between these locations.\nEnter miles:",
+                0.0,
+                0.0,
+                10000.0,
+                2,
+            )
+            if not ok:
+                return
+
+            distance_service.save_distance(previous_store_id, store_id, miles)
+            distance = miles
+
+        self.pending_route.append(
+            {"store_id": store_id, "miles_from_previous": distance}
+        )
+        self.refresh_today_route_display()
+
+    def clear_today_route(self):
+        self.pending_route = []
+        self.refresh_today_route_display()
 
     def build_display_row(self, store):
         row_widget = QWidget()
@@ -251,6 +472,8 @@ class MainWindow(QMainWindow):
 
         if not new_name:
             self.refresh_store_list()
+            self.refresh_today_cards()
+            self.refresh_today_route_display()
             return
 
         try:
@@ -258,9 +481,13 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "Could not rename store", str(exc))
             self.refresh_store_list()
+            self.refresh_today_cards()
+            self.refresh_today_route_display()
             return
 
         self.refresh_store_list()
+        self.refresh_today_cards()
+        self.refresh_today_route_display()
 
     def add_store(self):
         try:
@@ -271,18 +498,32 @@ class MainWindow(QMainWindow):
 
         self.name_input.clear()
         self.refresh_store_list()
+        self.refresh_today_cards()
         self.name_input.setFocus()
+
+    def delete_last_stop(self):
+        if not self.pending_route:
+            QMessageBox.information(self, "Delete Last Stop", "There is no stop to delete.")
+            return
+
+        self.pending_route.pop()
+        self.refresh_today_route_display()
 
     def delete_store(self, store_id: int, store_name: str):
         confirm = QMessageBox.question(
             self,
             "Delete Store",
             f"Delete '{store_name}'?",
-            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes | QMessageBox.No
         )
 
         if confirm != QMessageBox.Yes:
             return
 
         store_service.delete_store(store_id)
+        self.pending_route = [
+            step for step in self.pending_route if step["store_id"] != store_id
+        ]
         self.refresh_store_list()
+        self.refresh_today_cards()
+        self.refresh_today_route_display()
