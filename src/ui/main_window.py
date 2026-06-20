@@ -1,7 +1,6 @@
 from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtWidgets import QAbstractItemView
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -12,6 +11,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
     QVBoxLayout,
+    QTabWidget,
 )
 
 from services import store_service
@@ -65,10 +65,22 @@ class MainWindow(QMainWindow):
 
         self.editing_store_id = None
 
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        self.tabs = QTabWidget()
+        self.setCentralWidget(self.tabs)
 
-        main_layout = QVBoxLayout(central_widget)
+        self.stores_tab = QWidget()
+        self.today_tab = QWidget()
+
+        self.tabs.addTab(self.stores_tab, "Stores")
+        self.tabs.addTab(self.today_tab, "Today's Visits")
+
+        self.build_stores_tab()
+        self.build_today_tab()
+
+        self.refresh_store_list()
+
+    def build_stores_tab(self):
+        main_layout = QVBoxLayout(self.stores_tab)
 
         title = QLabel("Mileage Tracker")
         title.setStyleSheet("font-size: 24px; font-weight: bold;")
@@ -76,6 +88,17 @@ class MainWindow(QMainWindow):
 
         subtitle = QLabel("Add stores and track when they were last visited.")
         main_layout.addWidget(subtitle)
+
+        search_row = QHBoxLayout()
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search stores")
+        self.search_input.setMinimumHeight(40)
+        self.search_input.setStyleSheet("font-size: 16px;")
+        self.search_input.textChanged.connect(self.refresh_store_list)
+        search_row.addWidget(self.search_input)
+
+        main_layout.addLayout(search_row)
 
         form_layout = QHBoxLayout()
 
@@ -94,18 +117,24 @@ class MainWindow(QMainWindow):
 
         main_layout.addLayout(form_layout)
 
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search stores")
-        self.search_input.setMinimumHeight(40)
-        self.search_input.setStyleSheet("font-size: 16px;")
-        self.search_input.textChanged.connect(self.refresh_store_list)
-        main_layout.addWidget(self.search_input)
-
         self.store_list = QListWidget()
+        self.store_list.setSpacing(6)
         self.store_list.itemDoubleClicked.connect(self.start_edit_store)
         main_layout.addWidget(self.store_list)
 
-        self.refresh_store_list()
+    def build_today_tab(self):
+        layout = QVBoxLayout(self.today_tab)
+
+        title = QLabel("Today's Visits")
+        title.setStyleSheet("font-size: 24px; font-weight: bold;")
+        layout.addWidget(title)
+
+        subtitle = QLabel("This is where the route for today will go.")
+        layout.addWidget(subtitle)
+
+        placeholder = QLabel("Coming next: click stores in order, enter miles, and save the day.")
+        placeholder.setStyleSheet("font-size: 16px; color: #666;")
+        layout.addWidget(placeholder)
 
     def refresh_store_list(self, editing_store_id=None):
         self.editing_store_id = editing_store_id
