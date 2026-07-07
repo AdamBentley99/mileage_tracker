@@ -9,7 +9,10 @@ def get_all_stores():
             """
             SELECT id, name, last_visited
             FROM stores
-            ORDER BY name COLLATE NOCASE
+            ORDER BY
+                last_visited IS NULL,
+                last_visited ASC,
+                name COLLATE NOCASE
             """
         ).fetchall()
 
@@ -22,6 +25,17 @@ def get_all_stores():
         for row in rows
     ]
 
+def update_store_last_visited(store_id: int, last_visited: str):
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE stores
+            SET last_visited = ?
+            WHERE id = ?
+            """,
+            (last_visited, store_id),
+        )
+        conn.commit()
 
 def add_store(name: str) -> None:
     cleaned_name = name.strip()
