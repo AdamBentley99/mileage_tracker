@@ -1,6 +1,5 @@
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QSpinBox,
     QGridLayout,
     QHBoxLayout,
@@ -634,15 +633,20 @@ class MainWindow(QMainWindow):
             QPushButton {
                 padding: 8px 14px;
                 border-radius: 10px;
-                border: 1px solid #d1d5db;
-                background-color: #ffffff;
+                border: none;
+                background-color: white;
                 color: #1f2937;
+                font-weight: 600;
             }
+
             QPushButton:hover {
-                background-color: #f8fafc;
+                background-color: #EC4899;
             }
-            """
-        )
+
+            QPushButton:pressed {
+                background-color: #991B1B;
+            }
+            """)
         delete_button.clicked.connect(
             lambda checked=False, store_id=store["id"], store_name=store["name"]: self.delete_store(store_id, store_name)
         )
@@ -777,15 +781,20 @@ class MainWindow(QMainWindow):
             QPushButton {
                 padding: 8px 14px;
                 border-radius: 10px;
-                border: 1px solid #d1d5db;
-                background-color: #ffffff;
+                border: none;
+                background-color: white;
                 color: #1f2937;
+                font-weight: 600;
             }
+
             QPushButton:hover {
-                background-color: #f8fafc;
+                background-color: #EC4899;
             }
-            """
-        )
+
+            QPushButton:pressed {
+                background-color: #991B1B;
+            }
+            """)
         delete_button.clicked.connect(
             lambda checked=False, store_id=store["id"], store_name=store["name"]: self.delete_store(store_id, store_name)
         )
