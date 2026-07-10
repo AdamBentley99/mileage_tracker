@@ -3,31 +3,17 @@ from datetime import date
 from database.init_db import get_connection
 
 
-def add_visit(
-    store_id: int,
-    sequence_number: int,
-    miles_from_previous: float | None = None,
-):
-    today = date.today().isoformat()
+def add_visit(store_id, sequence_number, miles_from_previous, visit_date=None):
+    if visit_date is None:
+        visit_date = date.today().isoformat()
 
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO visits
-            (
-                visit_date,
-                store_id,
-                sequence_number,
-                miles_from_previous
-            )
+            INSERT INTO visits (store_id, sequence_number, miles_from_previous, visit_date)
             VALUES (?, ?, ?, ?)
             """,
-            (
-                today,
-                store_id,
-                sequence_number,
-                miles_from_previous,
-            ),
+            (store_id, sequence_number, miles_from_previous, visit_date),
         )
 
         conn.execute(
@@ -36,10 +22,7 @@ def add_visit(
             SET last_visited = ?
             WHERE id = ?
             """,
-            (
-                today,
-                store_id,
-            ),
+            (visit_date, store_id),
         )
 
         conn.commit()

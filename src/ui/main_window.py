@@ -81,6 +81,8 @@ class MainWindow(QMainWindow):
         self.resize(1200, 800)
         self.setMinimumSize(800, 600)
 
+        self.route_date = date.today()
+
         self.editing_store_id = None
         self.pending_route = []
         self.route_manual_adjustment = 0.0
@@ -120,7 +122,7 @@ class MainWindow(QMainWindow):
         self.stores_tab = QWidget()
         self.today_tab = QWidget()
 
-        self.tabs.addTab(self.today_tab, "Today's Visits")
+        self.tabs.addTab(self.today_tab, "Create Route")
         self.tabs.addTab(self.stores_tab, "Stores")
 
         self.build_stores_tab()
@@ -143,6 +145,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(subtitle)
 
         search_row = QHBoxLayout()
+        search_row.setSpacing(10)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search stores")
@@ -163,6 +166,34 @@ class MainWindow(QMainWindow):
         )
         self.search_input.textChanged.connect(lambda _text: self.refresh_store_list())
         search_row.addWidget(self.search_input)
+
+        self.clear_search_button = QPushButton("Clear")
+        self.clear_search_button.setMinimumSize(180, 40)
+        self.clear_search_button.setStyleSheet("""
+            QPushButton {
+                font-size: 16px;
+                font-weight: 600;
+                color: #1F5FD6;
+                background-color: white;
+                border: 2px solid #1F5FD6;
+                border-radius: 10px;
+                padding: 10px 18px;
+            }
+
+            QPushButton:hover {
+                background-color: #EEF5FF;
+                border-color: #164DB0;
+                color: #164DB0;
+            }
+
+            QPushButton:pressed {
+                background-color: #DCEAFF;
+                border-color: #133F91;
+                color: #133F91;
+            }
+        """)
+        self.clear_search_button.clicked.connect(self.clear_search)
+        search_row.addWidget(self.clear_search_button)
 
         main_layout.addLayout(search_row)
 
@@ -236,16 +267,46 @@ class MainWindow(QMainWindow):
     def build_today_tab(self):
         layout = QVBoxLayout(self.today_tab)
 
-        title = QLabel("Today's Visits")
+        title = QLabel("Create Route")
         title.setStyleSheet("font-size: 24px; font-weight: bold;")
         layout.addWidget(title)
 
-        subtitle = QLabel("Click stores below to build today's route.")
+        subtitle = QLabel("Click stores below to build a route.")
         layout.addWidget(subtitle)
+
+        date_row = QHBoxLayout()
+        date_row.setSpacing(10)
+
+        self.prev_date_button = QPushButton("◀")
+        self.prev_date_button.setFixedSize(44, 40)
+        self.prev_date_button.setStyleSheet("font-size: 20px; font-weight: bold;")
+        self.prev_date_button.clicked.connect(lambda: self.shift_route_date(-1))
+        date_row.addWidget(self.prev_date_button)
+
+        self.route_date_label = QLabel()
+        self.route_date_label.setFixedWidth(200)
+        self.route_date_label.setAlignment(Qt.AlignCenter)
+        self.route_date_label.setStyleSheet("""
+            font-size: 18px;
+            font-weight: 700;
+            color: #111827;
+        """)
+        date_row.addWidget(self.route_date_label)
+
+        self.next_date_button = QPushButton("▶")
+        self.next_date_button.setFixedSize(44, 40)
+        self.next_date_button.setStyleSheet("font-size: 20px; font-weight: bold;")
+        self.next_date_button.clicked.connect(lambda: self.shift_route_date(1))
+        date_row.addWidget(self.next_date_button)
+
+        date_row.addStretch()
+        layout.addLayout(date_row)
+
+        self.refresh_route_date_display()
 
         route_header_row = QHBoxLayout()
 
-        route_title = QLabel("Today's Route")
+        route_title = QLabel("Route :")
         route_title.setStyleSheet("font-size: 18px; font-weight: bold;")
         route_header_row.addWidget(route_title)
 
@@ -269,11 +330,23 @@ class MainWindow(QMainWindow):
         plus_button.setMinimumSize(50, 40)
         plus_button.clicked.connect(lambda: self.adjust_route_total(1))
         adjustment_row.addWidget(plus_button)
+        plus_button.setStyleSheet("""
+            QPushButton {
+                font-size: 24px;
+                font-weight: bold;
+            }
+        """)
 
         minus_button = QPushButton("-")
         minus_button.setMinimumSize(50, 40)
         minus_button.clicked.connect(lambda: self.adjust_route_total(-1))
         adjustment_row.addWidget(minus_button)
+        minus_button.setStyleSheet("""
+            QPushButton {
+                font-size: 24px;
+                font-weight: bold;
+            }
+        """)
 
         route_header_row.addLayout(adjustment_row)
 
@@ -342,6 +415,7 @@ class MainWindow(QMainWindow):
                 store_id=step["store_id"],
                 sequence_number=index,
                 miles_from_previous=step["miles_from_previous"],
+                visit_date=self.route_date.isoformat(),
             )
 
         QMessageBox.information(self, "Save Route", "Route saved successfully.")
@@ -453,6 +527,23 @@ class MainWindow(QMainWindow):
                 widget.deleteLater()
 
         stores = store_service.get_all_stores()
+
+        priority_names = {
+            "home",
+            "hq",
+            "headquarters",
+            "company",
+            "office",
+            "warehouse",
+            "shop",
+        }
+
+        stores.sort(
+            key=lambda s: (
+                s["name"].strip().lower() not in priority_names,
+                s["name"].lower(),
+            )
+        )
 
         for index, store in enumerate(stores):
             row = index // 4
@@ -592,6 +683,24 @@ class MainWindow(QMainWindow):
 
         self.pending_route.pop()
         self.refresh_today_route_display()
+
+    def format_route_date(self) -> str:
+        return f"{self.route_date.strftime('%A')}, {self.route_date.strftime('%b')} {self.route_date.day}, {self.route_date.year}"
+
+    def refresh_route_date_display(self):
+        self.route_date_label.setText(self.format_route_date())
+        self.next_date_button.setEnabled(self.route_date < date.today())
+
+    def shift_route_date(self, days: int):
+        new_date = self.route_date + timedelta(days=days)
+        if new_date > date.today():
+            return
+        self.route_date = new_date
+        self.refresh_route_date_display()
+
+    def clear_search(self):
+        self.search_input.clear()
+        self.search_input.setFocus()
 
     def build_display_row(self, store):
         row_widget = StoreCardWidget(store["id"], self.start_edit_store)
