@@ -1,4 +1,11 @@
 from PySide6.QtCore import Qt, QTimer
+from pathlib import Path
+import os
+from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment
+import json
+from PySide6.QtWidgets import QFileDialog
 from PySide6.QtWidgets import (
     QSpinBox,
     QGridLayout,
@@ -86,6 +93,13 @@ class MainWindow(QMainWindow):
         self.editing_store_id = None
         self.pending_route = []
         self.route_manual_adjustment = 0.0
+        self.app_dir = self.get_app_dir()
+        self.app_dir.mkdir(parents=True, exist_ok=True)
+
+        self.settings_file = self.app_dir / "settings.json"
+        self.export_file_path = None
+
+        self.load_settings()
 
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet("""
@@ -267,9 +281,47 @@ class MainWindow(QMainWindow):
     def build_today_tab(self):
         layout = QVBoxLayout(self.today_tab)
 
+        header_row = QHBoxLayout()
+
         title = QLabel("Create Route")
         title.setStyleSheet("font-size: 24px; font-weight: bold;")
-        layout.addWidget(title)
+        header_row.addWidget(title)
+
+        header_row.addStretch()
+
+        self.excel_file_label = QLabel(self.get_excel_file_label_text())
+        self.excel_file_label.setStyleSheet("""
+            QLabel {
+                font-size: 14px;
+                color: #6b7280;
+                margin-right: 10px;
+            }
+        """)
+        header_row.addWidget(self.excel_file_label)
+
+        self.choose_file_button = QPushButton("Choose Excel File")
+        self.choose_file_button.setMinimumHeight(36)
+        self.choose_file_button.setStyleSheet("""
+            QPushButton {
+                font-size: 14px;
+                font-weight: 600;
+                color: #1F5FD6;
+                background-color: white;
+                border: 2px solid #1F5FD6;
+                border-radius: 10px;
+                padding: 8px 14px;
+            }
+            QPushButton:hover {
+                background-color: #EEF5FF;
+            }
+            QPushButton:pressed {
+                background-color: #DCEAFF;
+            }
+        """)
+        self.choose_file_button.clicked.connect(self.choose_export_file)
+        header_row.addWidget(self.choose_file_button)
+
+        layout.addLayout(header_row)
 
         subtitle = QLabel("Click stores below to build a route.")
         layout.addWidget(subtitle)
@@ -343,7 +395,7 @@ class MainWindow(QMainWindow):
         adjustment_row.addWidget(minus_button)
         minus_button.setStyleSheet("""
             QPushButton {
-                font-size: 24px;
+                font-size: 32px;
                 font-weight: bold;
             }
         """)
@@ -410,6 +462,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Save Route", "There is no route to save.")
             return
 
+        # Keep recording the actual store visits in your app
         for index, step in enumerate(self.pending_route, start=1):
             visit_service.add_visit(
                 store_id=step["store_id"],
@@ -417,6 +470,13 @@ class MainWindow(QMainWindow):
                 miles_from_previous=step["miles_from_previous"],
                 visit_date=self.route_date.isoformat(),
             )
+
+        # Ask for save location the first time, otherwise reuse the chosen file
+        if self.export_file_path is None:
+            if not self.choose_export_file():
+                return
+
+        self.save_route_to_excel()
 
         QMessageBox.information(self, "Save Route", "Route saved successfully.")
         self.clear_today_route()
@@ -480,6 +540,11 @@ class MainWindow(QMainWindow):
         self.refresh_today_cards()
         self.name_input.setFocus()
 
+    def get_excel_file_label_text(self):
+        if self.export_file_path:
+            return f"File: {self.export_file_path.name}"
+        return "No Excel file selected"
+
     def mark_store_visited_today(self, store_id: int):
         store_service.update_store_last_visited(store_id, date.today().isoformat())
         self.refresh_store_list(self.editing_store_id)
@@ -516,8 +581,169 @@ class MainWindow(QMainWindow):
                 total += step["miles_from_previous"]
         return total
 
+    def get_route_string(self) -> str:
+        parts = []
+        for step in self.pending_route:
+            store = store_service.get_store_by_id(step["store_id"])
+            if store is not None:
+                parts.append(store["name"])
+        return " -> ".join(parts)
+
+    def choose_export_file(self):
+        default_path = str(Path.home() / "Documents" / "business mileage.xlsx")
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Choose Excel File",
+            default_path,
+            "Excel Files (*.xlsx)",
+        )
+
+        if not file_path:
+            return False
+
+        if not file_path.lower().endswith(".xlsx"):
+            file_path += ".xlsx"
+
+        self.export_file_path = Path(file_path)
+
+        self.save_settings()
+
+        self.excel_file_label.setText(self.get_excel_file_label_text())
+
+        return True
+
+    def autosize_excel_columns(self, ws):
+        for col_cells in ws.columns:
+            max_length = 0
+            col_letter = col_cells[0].column_letter
+
+            for cell in col_cells:
+                value = cell.value
+                if value is None:
+                    continue
+                max_length = max(max_length, len(str(value)))
+
+            ws.column_dimensions[col_letter].width = min(max_length + 4, 60)
+
     def get_route_total(self) -> float:
         return self.get_base_route_total() + self.route_manual_adjustment
+
+    def get_app_dir(self):
+        if os.name == "nt":
+            local_appdata = os.getenv("LOCALAPPDATA")
+            if local_appdata:
+                return Path(local_appdata) / "MileageTracker"
+
+        return Path.home() / ".mileage_tracker"
+
+    def load_settings(self):
+        if not self.settings_file.exists():
+            return
+
+        try:
+            with open(self.settings_file, "r") as f:
+                settings = json.load(f)
+
+            path = settings.get("excel_file")
+
+            if path:
+                self.export_file_path = Path(path)
+
+        except Exception:
+            pass
+
+    def save_settings(self):
+        settings = {
+            "excel_file": str(self.export_file_path)
+            if self.export_file_path
+            else ""
+        }
+
+        with open(self.settings_file, "w") as f:
+            json.dump(settings, f, indent=4)
+
+    def save_route_to_excel(self):
+        if self.export_file_path is None:
+            return
+
+        route_date_str = self.route_date.isoformat()
+        miles = round(self.get_route_total(), 1)
+        route_string = self.get_route_string().strip()
+
+        if self.export_file_path.exists():
+            wb = load_workbook(self.export_file_path)
+            ws = wb.active
+        else:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Mileage"
+            ws.append(["Date", "Miles Traveled", "Sales Visits"])
+
+        # Styling
+        header_fill = PatternFill("solid", fgColor="DCE6F1")
+        header_font = Font(bold=True)
+        thin_border = Border(
+            left=Side(style="thin", color="B7C3D0"),
+            right=Side(style="thin", color="B7C3D0"),
+            top=Side(style="thin", color="B7C3D0"),
+            bottom=Side(style="thin", color="B7C3D0"),
+        )
+
+        # If this is a new workbook, style the header row
+        if ws.max_row == 1:
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Find an existing row for this date
+        target_row = None
+        for row in range(2, ws.max_row + 1):
+            cell_value = ws.cell(row=row, column=1).value
+            if str(cell_value) == route_date_str:
+                target_row = row
+                break
+
+        if target_row is None:
+            ws.append([route_date_str, miles, route_string])
+            target_row = ws.max_row
+        else:
+            current_miles = ws.cell(row=target_row, column=2).value or 0
+            current_visits = ws.cell(row=target_row, column=3).value or ""
+
+            ws.cell(row=target_row, column=2).value = round(float(current_miles) + miles, 0)
+
+            if current_visits.strip():
+                ws.cell(row=target_row, column=3).value = current_visits + "\n" + route_string
+            else:
+                ws.cell(row=target_row, column=3).value = route_string
+
+        # Apply row styling
+        for col in range(1, 4):
+            cell = ws.cell(row=target_row, column=col)
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical="top")
+
+        # Format columns
+        ws.cell(row=target_row, column=1).alignment = Alignment(horizontal="center", vertical="top")
+        ws.cell(row=target_row, column=2).alignment = Alignment(horizontal="right", vertical="top")
+        ws.cell(row=target_row, column=3).alignment = Alignment(wrap_text=True, vertical="top")
+
+        # Freeze header row and enable filters
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+
+        # Slightly taller rows for wrapped text
+        ws.row_dimensions[target_row].height = 36
+
+        # Better column widths
+        ws.column_dimensions["A"].width = 14
+        ws.column_dimensions["B"].width = 16
+        ws.column_dimensions["C"].width = 50
+
+        wb.save(self.export_file_path)
 
     def refresh_today_cards(self):
         while self.today_cards_grid.count():
