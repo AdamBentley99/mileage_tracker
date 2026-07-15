@@ -1,6 +1,7 @@
 from PySide6.QtCore import Qt, QTimer
 from pathlib import Path
 import os
+import sys
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment
@@ -289,15 +290,17 @@ class MainWindow(QMainWindow):
 
         header_row.addStretch()
 
+        right_header_row = QHBoxLayout()
+        right_header_row.setSpacing(10)
+
         self.excel_file_label = QLabel(self.get_excel_file_label_text())
         self.excel_file_label.setStyleSheet("""
             QLabel {
                 font-size: 14px;
                 color: #6b7280;
-                margin-right: 10px;
             }
         """)
-        header_row.addWidget(self.excel_file_label)
+        right_header_row.addWidget(self.excel_file_label)
 
         self.choose_file_button = QPushButton("Choose Excel File")
         self.choose_file_button.setMinimumHeight(36)
@@ -319,12 +322,44 @@ class MainWindow(QMainWindow):
             }
         """)
         self.choose_file_button.clicked.connect(self.choose_export_file)
-        header_row.addWidget(self.choose_file_button)
+        right_header_row.addWidget(self.choose_file_button)
+
+        header_row.addLayout(right_header_row)
 
         layout.addLayout(header_row)
 
+        subtitle_row = QHBoxLayout()
+
         subtitle = QLabel("Click stores below to build a route.")
-        layout.addWidget(subtitle)
+        subtitle_row.addWidget(subtitle)
+
+        subtitle_row.addStretch()
+
+        self.open_file_button = QPushButton("Open File")
+        self.open_file_button.setFixedSize(110, 32)
+        self.open_file_button.setStyleSheet("""
+            QPushButton {
+                font-size: 13px;
+                font-weight: 600;
+                color: #1F5FD6;
+                background: white;
+                border: 2px solid #1F5FD6;
+                border-radius: 8px;
+            }
+
+            QPushButton:hover {
+                background: #EEF5FF;
+            }
+
+            QPushButton:pressed {
+                background: #DCEAFF;
+            }
+        """)
+        self.open_file_button.clicked.connect(self.open_export_file)
+
+        subtitle_row.addWidget(self.open_file_button)
+
+        layout.addLayout(subtitle_row)
 
         date_row = QHBoxLayout()
         date_row.setSpacing(10)
@@ -336,7 +371,7 @@ class MainWindow(QMainWindow):
         date_row.addWidget(self.prev_date_button)
 
         self.route_date_label = QLabel()
-        self.route_date_label.setFixedWidth(200)
+        self.route_date_label.setFixedWidth(205)
         self.route_date_label.setAlignment(Qt.AlignCenter)
         self.route_date_label.setStyleSheet("""
             font-size: 18px;
@@ -613,6 +648,23 @@ class MainWindow(QMainWindow):
 
         return True
 
+    def open_export_file(self):
+        if self.export_file_path is None or not self.export_file_path.exists():
+            QMessageBox.information(self, "Open File", "file not found")
+            return
+
+        try:
+            if os.name == "nt":
+                os.startfile(self.export_file_path)
+            elif sys.platform == "darwin":
+                import subprocess
+                subprocess.run(["open", str(self.export_file_path)], check=False)
+            else:
+                import subprocess
+                subprocess.run(["xdg-open", str(self.export_file_path)], check=False)
+        except Exception:
+            QMessageBox.information(self, "Open File", "file not found")
+
     def autosize_excel_columns(self, ws):
         for col_cells in ws.columns:
             max_length = 0
@@ -668,17 +720,31 @@ class MainWindow(QMainWindow):
             return
 
         route_date_str = self.route_date.isoformat()
+        route_year_str = str(self.route_date.year)
         miles = round(self.get_route_total(), 1)
         route_string = self.get_route_string().strip()
 
         if self.export_file_path.exists():
             wb = load_workbook(self.export_file_path)
-            ws = wb.active
         else:
             wb = Workbook()
-            ws = wb.active
-            ws.title = "Mileage"
-            ws.append(["Date", "Miles Traveled", "Sales Visits"])
+            # Remove the default sheet so we can create our year sheet cleanly
+            default_ws = wb.active
+            wb.remove(default_ws)
+
+        # Get or create the sheet for this year
+        if route_year_str in wb.sheetnames:
+            ws = wb[route_year_str]
+        else:
+            ws = wb.create_sheet(title=route_year_str)
+            ws.append(["Date", "Miles Traveled", "Route"])
+
+        # Keep year tabs in order
+        wb._sheets.sort(key=lambda sheet: sheet.title)
+
+        # Open workbook to the current year's sheet
+        wb.active = wb.sheetnames.index(route_year_str)
+        ws.sheet_view.tabSelected = True
 
         # Styling
         header_fill = PatternFill("solid", fgColor="DCE6F1")
@@ -690,17 +756,23 @@ class MainWindow(QMainWindow):
             bottom=Side(style="thin", color="B7C3D0"),
         )
 
-        # If this is a new workbook, style the header row
-        if ws.max_row == 1:
-            for cell in ws[1]:
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.border = thin_border
-                cell.alignment = Alignment(horizontal="center", vertical="center")
+        # If this is an old workbook layout, reserve row 2 for the summary area
+        row2_has_route_data = any(
+            ws.cell(row=2, column=col).value is not None for col in range(1, 4)
+        )
+        if row2_has_route_data:
+            ws.insert_rows(2, 1)
 
-        # Find an existing row for this date
+        # Style the table header row
+        for cell in ws[1][:3]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Find an existing row for this date, starting at row 3
         target_row = None
-        for row in range(2, ws.max_row + 1):
+        for row in range(3, ws.max_row + 1):
             cell_value = ws.cell(row=row, column=1).value
             if str(cell_value) == route_date_str:
                 target_row = row
@@ -713,35 +785,85 @@ class MainWindow(QMainWindow):
             current_miles = ws.cell(row=target_row, column=2).value or 0
             current_visits = ws.cell(row=target_row, column=3).value or ""
 
-            ws.cell(row=target_row, column=2).value = round(float(current_miles) + miles, 0)
+            ws.cell(row=target_row, column=2).value = round(float(current_miles) + miles, 1)
 
-            if current_visits.strip():
+            if str(current_visits).strip():
                 ws.cell(row=target_row, column=3).value = current_visits + "\n" + route_string
             else:
                 ws.cell(row=target_row, column=3).value = route_string
 
-        # Apply row styling
+        # Style the data row
         for col in range(1, 4):
             cell = ws.cell(row=target_row, column=col)
             cell.border = thin_border
             cell.alignment = Alignment(vertical="top")
 
-        # Format columns
         ws.cell(row=target_row, column=1).alignment = Alignment(horizontal="center", vertical="top")
         ws.cell(row=target_row, column=2).alignment = Alignment(horizontal="right", vertical="top")
         ws.cell(row=target_row, column=3).alignment = Alignment(wrap_text=True, vertical="top")
 
-        # Freeze header row and enable filters
-        ws.freeze_panes = "A2"
-        ws.auto_filter.ref = ws.dimensions
+        # Summary area in the top-right header area
+        # E1/E2 = per-mile rate
+        # G1/G2 = total miles
+        # H1/H2 = tax deduction
 
-        # Slightly taller rows for wrapped text
-        ws.row_dimensions[target_row].height = 36
+        for cell_ref in ["E1", "E2"]:
+            ws[cell_ref].border = thin_border
+            ws[cell_ref].alignment = Alignment(horizontal="center", vertical="center")
 
-        # Better column widths
+        # G1/G2/H1/H2 (blue summary boxes)
+        for cell_ref in ["G1", "G2", "H1", "H2"]:
+            ws[cell_ref].fill = header_fill
+            ws[cell_ref].border = thin_border
+            ws[cell_ref].alignment = Alignment(horizontal="center", vertical="center")
+
+        # E1 / E2: editable rate
+        ws["E1"] = "$ per Mile"
+        ws["E1"].font = Font(bold=True, size=14, color="808080")
+        ws["E1"].fill = PatternFill(fill_type=None)  # no background fill
+
+        ws["E2"] = 0.725
+        ws["E2"].font = Font(bold=True, size=14, color="808080")
+        ws["E2"].fill = PatternFill(fill_type=None)  # no background fill
+        ws["E2"].number_format = '$0.000'
+
+        # G1 / G2: total miles
+        ws["G1"] = "Total Miles"
+        ws["G1"].font = Font(bold=True, size=14)
+
+        ws["G2"] = "=SUM(B3:B1048576)"
+        ws["G2"].font = Font(bold=True, size=14)
+        ws["G2"].number_format = '0.0'
+
+        # H1 / H2: mileage tax deduction
+        ws["H1"] = "Mileage Tax Deduction"
+        ws["H1"].font = Font(bold=True, size=14)
+
+        ws["H2"] = "=E2*G2"
+        ws["H2"].font = Font(bold=True, size=14)
+        ws["H2"].number_format = '$#,##0.00'
+
+        # Column widths
         ws.column_dimensions["A"].width = 14
         ws.column_dimensions["B"].width = 16
         ws.column_dimensions["C"].width = 50
+
+        ws.column_dimensions["E"].width = 14
+        ws.column_dimensions["G"].width = 14
+        ws.column_dimensions["H"].width = 26
+
+        # Row heights for the header area
+        ws.row_dimensions[1].height = 24
+        ws.row_dimensions[2].height = 24
+
+        # Freeze the top two rows so the header + summary stay visible
+        ws.freeze_panes = "A3"
+
+        # Filters only on the actual data table
+        ws.auto_filter.ref = f"A1:C{max(target_row, 3)}"
+
+        # Slightly taller rows for wrapped text
+        ws.row_dimensions[target_row].height = 36
 
         wb.save(self.export_file_path)
 
