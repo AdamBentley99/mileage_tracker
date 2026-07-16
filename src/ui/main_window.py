@@ -288,6 +288,17 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("font-size: 24px; font-weight: bold;")
         header_row.addWidget(title)
 
+        self.status_label = QLabel("")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setMinimumWidth(350)
+        self.status_label.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: 600;
+            }
+        """)
+        header_row.addWidget(self.status_label)
+
         header_row.addStretch()
 
         right_header_row = QHBoxLayout()
@@ -327,6 +338,18 @@ class MainWindow(QMainWindow):
         header_row.addLayout(right_header_row)
 
         layout.addLayout(header_row)
+
+        self.route_status_label = QLabel("")
+        self.route_status_label.setAlignment(Qt.AlignCenter)
+        self.route_status_label.setMinimumHeight(26)
+        self.route_status_label.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: 700;
+            }
+        """)
+        self.route_status_label.hide()
+        layout.addWidget(self.route_status_label)
 
         subtitle_row = QHBoxLayout()
 
@@ -494,10 +517,27 @@ class MainWindow(QMainWindow):
 
     def save_today_route(self):
         if not self.pending_route:
-            QMessageBox.information(self, "Save Route", "There is no route to save.")
+            self.show_route_status("There is no route to save.", success=False)
             return
 
-        # Keep recording the actual store visits in your app
+        # Ask for save location the first time, otherwise reuse the chosen file
+        if self.export_file_path is None:
+            if not self.choose_export_file():
+                return
+
+        try:
+            self.save_route_to_excel()
+        except PermissionError:
+            self.show_route_status(
+                "Excel file is open. Close it and try again.",
+                success=False,
+            )
+            return
+        except Exception as exc:
+            self.show_route_status(f"Could not save route: {exc}", success=False)
+            return
+
+        # Keep recording the actual store visits in your app only after Excel saves successfully
         for index, step in enumerate(self.pending_route, start=1):
             visit_service.add_visit(
                 store_id=step["store_id"],
@@ -506,17 +546,28 @@ class MainWindow(QMainWindow):
                 visit_date=self.route_date.isoformat(),
             )
 
-        # Ask for save location the first time, otherwise reuse the chosen file
-        if self.export_file_path is None:
-            if not self.choose_export_file():
-                return
-
-        self.save_route_to_excel()
-
-        QMessageBox.information(self, "Save Route", "Route saved successfully.")
+        self.show_route_status("Route saved successfully.", success=True)
         self.clear_today_route()
         self.refresh_store_list()
         self.refresh_today_cards()
+
+    def show_route_status(self, message: str, success: bool):
+        color = "#15803d" if success else "#dc2626"
+        self.route_status_label.setText(message)
+        self.route_status_label.setStyleSheet(f"""
+            QLabel {{
+                font-size: 16px;
+                font-weight: 700;
+                color: {color};
+            }}
+        """)
+        self.route_status_label.show()
+        QTimer.singleShot(4000, self.clear_route_status)
+
+    def clear_route_status(self):
+        if hasattr(self, "route_status_label"):
+            self.route_status_label.clear()
+            self.route_status_label.hide()
 
     def start_edit_store(self, store_id: int):
         self.refresh_store_list(editing_store_id=store_id)

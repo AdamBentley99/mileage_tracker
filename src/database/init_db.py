@@ -1,14 +1,24 @@
 from pathlib import Path
+import os
 import sqlite3
 
-# Project root = .../mileage_tracker
-ROOT_DIR = Path(__file__).resolve().parents[2]
-DATA_DIR = ROOT_DIR / "data"
-DB_PATH = DATA_DIR / "mileage.db"
+
+def get_db_path() -> Path:
+    if os.name == "nt":
+        local_appdata = os.getenv("LOCALAPPDATA")
+        if local_appdata:
+            base_dir = Path(local_appdata) / "MileageTracker"
+        else:
+            base_dir = Path.home() / ".mileage_tracker"
+    else:
+        base_dir = Path.home() / ".mileage_tracker"
+
+    base_dir.mkdir(parents=True, exist_ok=True)
+    return base_dir / "mileage.db"
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_db_path())
     conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
@@ -45,13 +55,11 @@ def create_tables(conn: sqlite3.Connection) -> None:
 
 
 def init_db() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-
     with get_connection() as conn:
         create_tables(conn)
         conn.commit()
 
-    print(f"Database initialized at: {DB_PATH}")
+    print(f"Database initialized at: {get_db_path()}")
 
 
 if __name__ == "__main__":

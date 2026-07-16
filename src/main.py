@@ -1,10 +1,12 @@
 import sys
 from PySide6.QtWidgets import QApplication
 
+from database.init_db import init_db
 from ui.main_window import MainWindow
 
 
 def main():
+    init_db()  # create the database and tables first
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
