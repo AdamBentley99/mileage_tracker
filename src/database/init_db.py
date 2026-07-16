@@ -1,15 +1,22 @@
 from pathlib import Path
 import os
+import platform
 import sqlite3
 
 
 def get_db_path() -> Path:
-    if os.name == "nt":
+    system = platform.system()
+
+    if system == "Windows":
         local_appdata = os.getenv("LOCALAPPDATA")
         if local_appdata:
             base_dir = Path(local_appdata) / "MileageTracker"
         else:
             base_dir = Path.home() / ".mileage_tracker"
+
+    elif system == "Darwin":
+        base_dir = Path.home() / "Library" / "Application Support" / "MileageTracker"
+
     else:
         base_dir = Path.home() / ".mileage_tracker"
 
